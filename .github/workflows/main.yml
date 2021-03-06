@@ -1,0 +1,74 @@
+name: MirrorBot CI on macOS
+ 
+on:
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  GitHubMail: ${{ secrets.GitHubMail }}
+  GitHubName: ${{ secrets.GitHubName }}
+  BotRepoSlug: ${{ secrets.MIRROR_REPOSLUG }}
+  ConfigSlug: ${{ secrets.ConfigSlug }}
+  CredsSlug: ${{ secrets.CredsSlug }}
+  PickleSlug: ${{ secrets.PickleSlug }}
+  BotName: Zbot
+
+
+jobs:
+
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait and Early Trigger next workflow
+        run: |
+          while ((${TIME_LEFT:=300} > 0)); do
+            printf "Please wait %.f minutes ...\n" "${TIME_LEFT}"
+            sleep 5m
+            TIME_LEFT=$((TIME_LEFT - 5))
+          done
+          curl -X POST --header "Authorization: token ${{ secrets.GH_TOKEN }}" https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/main.yml/dispatches -d '{"ref":"main"}'
+
+  mirror:
+    runs-on: macos-10.15
+    steps:
+      - name: "Cache Git Credentials"
+        run: |
+          git config --global user.email ${GitHubMail}
+          git config --global user.name ${GitHubName}
+          git config --global credential.helper store
+          echo "https://${GitHubName}:${{ secrets.GH_TOKEN }}@github.com" > ~/.git-credentials
+      - name: macOS Cleanup
+        # This takes much more time (around 42 minutes now) than that of Ubuntu
+        uses: rokibhasansagar/slimhub_actions@mac
+      - name: Setup Docker through virtualbox
+        run: |
+          brew install -f -q --cask virtualbox
+          brew install -f -q --formula docker docker-machine
+          curl -sL https://github.com/boot2docker/boot2docker/releases/download/v19.03.12/boot2docker.iso -o ~/Downloads/boot2docker.iso
+          docker-machine create -d virtualbox --virtualbox-disk-size=322123 --virtualbox-memory=8096 --virtualbox-cpu-count=-1 --virtualbox-boot2docker-url ~/Downloads/boot2docker.iso default
+          docker-machine env default
+      - name: Clone And Prepare The Mirror Repository
+        run: |
+          cd /Users/runner
+          git clone https://${{ secrets.GH_TOKEN }}@github.com/${BotRepoSlug} --depth 1 botSource
+          cd /Users/runner/botSource
+          curl -sL ${ConfigSlug} -o config.env
+          curl -sL ${CredsSlug} -o credentials.json
+          curl -sL ${PickleSlug} | base64 --decode >> token.pickle
+      - name: Compile The Mirroring Docker Container
+        run: |
+          cd /Users/runner/botSource
+          eval $(docker-machine env default)
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u ${{ secrets.DOCKER_USERNAME }} --password-stdin &>/dev/null
+          docker build . --rm --force-rm --compress --no-cache=true --pull --file Dockerfile -t ${{ secrets.DOCKER_USERNAME }}/mirror-bot:${BotName}
+          docker image ls
+          docker push ${{ secrets.DOCKER_USERNAME }}/mirror-bot:${BotName}
+      - name: Run The Mirroring Docker Container
+        continue-on-error: true
+        timeout-minutes: 300
+        run: |
+          cd /Users/runner/botSource
+          docker run --privileged --rm -i ${{ secrets.DOCKER_USERNAME }}/mirror-bot:${BotName}
