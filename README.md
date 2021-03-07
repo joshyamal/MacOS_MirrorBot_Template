@@ -11,6 +11,7 @@ You can use any of these scripts
 - https://github.com/SVR666/LoaderX-Bot
 - https://github.com/iamLiquidX/MirrorX
 - https://github.com/MaxxRider/Maxx-Mirror-Pro
+- https://github.com/ghostmirrorlab/python-aria-mirror-bot
 
 > Let me know if there's any more like these modified forks.
 
